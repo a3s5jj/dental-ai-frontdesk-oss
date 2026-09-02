@@ -1,0 +1,3273 @@
+{
+  "id": "DentalFrontDesk01",
+  "name": "Dental AI Front Desk",
+  "nodes": [
+    {
+      "id": "afd-note-001",
+      "name": "Checklist Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -1492
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 520,
+        "height": 1380,
+        "content": "**Dental AI Front Desk**\n\nAn AI receptionist for a dental clinic. It answers **messages** (Facebook, Instagram,\nwebsite), books, reschedules and cancels appointments on Google Calendar, logs every\nconversation to Google Sheets, and answers clinic questions from a Supabase knowledge base.\n\n**Start here:** open `Prepare Conversation State` and edit the clinic profile block.\nThat is the only place your clinic's name, hours, address and contact details live.\n\nEntry points:\n- `GET /frontdesk/meta` Meta webhook verification\n- `POST /frontdesk/meta` Facebook and Instagram messages\n- `POST /frontdesk/inquiry` website or API messages\n\nEverything marked `REPLACE_` must be filled in before you activate this workflow.\nRun `grep -r REPLACE_ .` in the repo root to find them all.\n\nSetup: docs/SOP_SETUP.md · Customizing: docs/SOP_CUSTOMIZE.md · Daily use: docs/SOP_STAFF.md"
+      }
+    },
+    {
+      "id": "afd-meta-verify-webhook",
+      "name": "Meta Webhook Verify",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "dental-frontdesk-meta-verify",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "frontdesk/meta",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-check-verify-token",
+      "name": "Check Meta Verify Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const q = $input.first().json.query || {};\nconst expected = 'REPLACE_META_VERIFY_TOKEN';\nconst ok = q['hub.mode'] === 'subscribe' && q['hub.verify_token'] === expected;\nreturn [{ json: { statusCode: ok ? 200 : 403, body: ok ? String(q['hub.challenge'] || '') : 'verification_failed' } }];"
+      }
+    },
+    {
+      "id": "afd-respond-meta-challenge",
+      "name": "Respond Meta Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        416,
+        0
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.statusCode }}"
+        }
+      }
+    },
+    {
+      "id": "afd-meta-inbound-webhook",
+      "name": "Meta Inbound Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        416
+      ],
+      "webhookId": "dental-frontdesk-meta-inbound",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "frontdesk/meta",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-normalize-meta",
+      "name": "Normalize Meta Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        416
+      ],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\nconst out = [];\nconst objectType = String(body.object || '').toLowerCase();\nconst sourceChannel = objectType.includes('instagram') ? 'instagram' : 'facebook';\nfor (const entry of body.entry || []) {\n  for (const ev of entry.messaging || []) {\n    const text = ev.message?.text || ev.postback?.payload || '';\n    if (!text) continue;\n    out.push({ json: {\n      clinic_id: 'REPLACE_CLINIC_ID',\n      source_channel: sourceChannel,\n      source_user_id: ev.sender?.id || '',\n      message_text: text,\n      message_timestamp: ev.timestamp ? new Date(ev.timestamp).toISOString() : new Date().toISOString(),\n      reply_mode: 'meta',\n      raw_payload: body\n    }});\n  }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "afd-generic-inbound-webhook",
+      "name": "Generic Inquiry Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        624
+      ],
+      "webhookId": "dental-frontdesk-generic-inquiry",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "frontdesk/inquiry",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-normalize-generic",
+      "name": "Normalize Generic Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        624
+      ],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json || {};\nconst sourceChannel = body.source_channel || body.channel || 'website';\nconst userId = body.source_user_id || body.sender_id || body.user_id || body.email || body.mobile_number || `anon-${Date.now()}`;\nreturn [{ json: {\n  clinic_id: body.clinic_id || 'REPLACE_CLINIC_ID',\n  source_channel: sourceChannel,\n  source_user_id: String(userId),\n  client_name: body.client_name || body.name || null,\n  mobile_number: body.mobile_number || body.phone || null,\n  message_text: body.message_text || body.text || body.message || '',\n  message_timestamp: body.message_timestamp || new Date().toISOString(),\n  reply_mode: 'webhook',\n  raw_payload: body\n}}];"
+      }
+    },
+    {
+      "id": "afd-if-meta-reply",
+      "name": "Reply Via Meta?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4992,
+        416
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "meta-reply-condition",
+              "leftValue": "={{ $json.reply_mode }}",
+              "rightValue": "meta",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-send-meta-reply",
+      "name": "Send Meta Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5200,
+        208
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v21.0/me/messages",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "REPLACE_META_PAGE_TOKEN"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"recipient\": { \"id\": \"{{ $json.source_user_id }}\" },\n  \"messaging_type\": \"RESPONSE\",\n  \"message\": { \"text\": {{ JSON.stringify($json.reply_text) }} }\n}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-prepare-conversation",
+      "name": "Prepare Conversation State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        416
+      ],
+      "parameters": {
+        "jsCode": "// Deterministic language detection, so the agent is TOLD the language rather than asked to\n// notice it. Live testing showed it mirroring Taglish in one conversation and answering the\n// same Taglish opener in English in another. Words that are also English (\"at\", \"na\", \"sa\")\n// are deliberately left out, and two DISTINCT markers are required, so one loanword in an\n// otherwise English sentence does not flip the whole reply into Taglish.\nconst TAGALOG_MARKERS = /\\b(po|opo|ako|ikaw|kayo|namin|natin|ninyo|niya|nila|ang|ng|mga|ay|kung|kasi|pero|yung|yun|ito|iyan|ba|naman|lang|sige|salamat|magkano|ano|sino|saan|kailan|paano|bakit|gusto|pwede|puwede|meron|mayroon|wala|hindi|bukas|ngayon|mamaya|kumusta|kamusta|maganda|magandang|pasensya|tulong|araw|ngipin|bunot|pabunot|sakit|masakit)\\b/g;\n\nreturn $input.all().map(item => {\n  const j = item.json;\n  const markerHits = new Set((String(j.message_text || '').toLowerCase().match(TAGALOG_MARKERS) || []));\n  const patientLanguage = markerHits.size >= 2 ? 'Taglish' : 'English';\n  const conversationId = j.conversation_id || `${j.clinic_id}:${j.source_channel}:${j.source_user_id}`;\n  return { json: {\n    ...j,\n    conversation_id: conversationId,\n    lead_id: j.lead_id || conversationId,\n    message_text: String(j.message_text || '').trim(),\n    received_at: new Date().toISOString(),\n    clinic_timezone: 'Asia/Manila',\n    patient_language: patientLanguage,\n    // Clinic profile. THIS IS THE ONLY PLACE YOU EDIT to point the front desk at your\n    // own practice. Single source of truth for hours: Check Hours, Check Move Hours,\n    // Build Reject Reply and the agent's Context block all read these and nothing else.\n    // See config/clinic.example.json and docs/SOP_CUSTOMIZE.md.\n    clinic_name: 'Example Dental Clinic',\n    clinic_open_hour: 8,               // 24h clock. 8 = 8AM. First bookable hour.\n    clinic_close_hour: 17,             // 24h clock. 17 = 5PM. Last appointment ENDS by this hour.\n    clinic_closed_weekdays: [7],       // ISO weekdays, 1=Mon ... 7=Sun. [7] = closed Sundays.\n    clinic_hours_text: 'Monday to Saturday, 8AM to 5PM, closed Sunday',\n    clinic_address: '123 Example Street, Your City',\n    clinic_mobile: '000 000 0000',\n    clinic_email: 'hello@example-dental.test',\n    clinic_dentist: 'Dr. Example Dentist',\n    clinic_last_walk_in: '4:30PM'      // Latest a walk-in is accepted. Text only, shown to patients.\n  }};\n}).filter(item => item.json.message_text);"
+      }
+    },
+    {
+      "id": "afd-agent",
+      "name": "AI RAG Front Desk Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        832,
+        416
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.message_text }}",
+        "hasOutputParser": true,
+        "options": {
+          "maxIterations": 8,
+          "systemMessage": "=You are the 24/7 AI front desk for {{ $json.clinic_name }}.\n\nYou handle inquiries, answer factual clinic questions from the knowledge base, collect booking details, and decide when to escalate to staff.\n\nWho you are:\n- Warm, professional, gentle, calm, encouraging, and patient-centered. Friendly, but never overly casual.\n- Every patient should come away feeling safe, heard, comfortable, not judged, and confident about their treatment.\n- Acknowledge worry or embarrassment before you answer it. Never rush anyone, never lecture, and never make a patient feel judged for a gap in their dental care.\n- This is your voice, as a sample of tone and not a script to copy: Hello! Welcome to {{ $json.clinic_name }}. 😊 Thank you for reaching out. I'm here to help you book an appointment or answer your questions.\n- Keep replies short and clear. Warmth comes from word choice, not from length.\n- Make each point once. Do not restate the same advice further down the same message, and do not repeat something you already said in an earlier turn unless the patient asks again.\n- Only offer to book when the patient has shown some interest in booking, or has just asked something a booking answers. Do not end every reply with a booking pitch.\n- If a patient asks several things in one message, answer each of them, or say plainly which one you cannot answer. Never quietly skip a question, even one you are not allowed to answer: declining is fine, ignoring is not.\n- Do not claim services, facilities, or qualities the knowledge base does not state.\n\nLanguage:\n- Match the patient's language. If they write in English, reply in English. If they write in Tagalog or in Taglish, reply in Taglish.\n- Context carries patient_language, worked out from the patient's own words before you saw them. Follow it. When it says Taglish, reply in Taglish even if their latest message happens to be short or mostly English, because patients switch back and forth mid conversation. When it says English, reply in English.\n- Never reply in pure Tagalog, and never use deep or formal Tagalog.\n- The test for good Taglish: everyday Filipino for the conversational parts, English for anything dental, medical, scheduling, or money. If a sentence is coming out fully Tagalog, put the clinical and scheduling words back into English.\n- This is the shape of a Taglish reply, as a sample of style and not a script to copy: Okay po, ma-schedule po natin kayo for tooth extraction sa Monday, 10AM po.\n- Do not write deep Tagalog like this: Isasaayos po natin ang inyong pagpapabunot ng ngipin sa araw ng Lunes.\n- Words like pagsusuri, karamdaman, manggagamot, pasilidad, gamutan, and pagpapagaling are too deep. Use consultation, check-up, dentist, clinic, and treatment instead.\n- Always use po in Taglish replies.\n- Clinic facts stay in English exactly as the knowledge base states them: hours, address, service names, payment methods, and the price policy. Wrap them in Taglish, do not translate them.\n- Keep these lines in English exactly as written even inside a Taglish reply: the opening greeting, and the line Our dentist will examine you first to provide the most appropriate treatment.\n- When you call search_knowledge, always write the query in English, even when the patient wrote in Tagalog or Taglish. The knowledge base is written in English and a Tagalog query can miss the right section completely.\n\nOpening a conversation:\n- If the first message is only a greeting (\"hi\", \"hello\", \"good morning\", \"kumusta\", \"magandang umaga\", \"magandang hapon\", \"magandang gabi\") with no actual request, reply with exactly this text and nothing else, and do not put quotation marks around it: Hello! 👋 Welcome to {{ $json.clinic_name }}. Thank you for contacting us. I'm here to assist you with appointments, services, and general inquiries. How may I help you today?\n- If the first message already contains a question or a booking request, do NOT send that greeting. Open with one warm line that welcomes them and acknowledges what they asked, then answer it.\n- Greet only once per conversation.\n\nClinical limits (never break these):\n- Never diagnose. Do not name a condition or disease the patient \"has\", and do not rule anything out.\n- Never prescribe, recommend, or dose any medication, including over-the-counter painkillers and antibiotics.\n- Never promise a treatment outcome, a result, a recovery time, or that something will not hurt.\n- When someone describes symptoms or asks what is wrong with them, respond with empathy first, then give this line as written, with no quotation marks around it: Our dentist will examine you first to provide the most appropriate treatment. Then offer to book them in.\n- You may still explain what a procedure involves, what it costs, and how to prepare, when the knowledge base supports it. Explaining a procedure is allowed. Predicting a patient's result is not.\n- Genuine emergencies (severe pain, heavy bleeding, facial swelling, injury) still go to handoff as urgent.\n\nHard rules:\n- Use search_knowledge before answering factual clinic questions about services, pricing, hours, location, procedures, policies, or preparation.\n- The clinic facts in Context (clinic_hours, last_walk_in, clinic_address, clinic_mobile, clinic_email, clinic_dentist) are authoritative and always present. Answer those straight from Context. Never say you do not know one of them, never say the patient will find out when they arrive, and never offer a time outside clinic_hours.\n- If the answer is not supported by the knowledge base, do not guess. Say the clinic team will confirm and set action to handoff.\n- Silence is not a no. If the knowledge base does not mention something, you do not know whether the clinic offers it, and you must never turn that into a denial. This matters most for payment methods, cancellation and no-show policies, HMO cover, referrals, and anything to do with contacting the clinic outside opening hours. Say the clinic team will confirm, and hand off.\n- Never invent a phone number, an email address, a website, or a policy. The only contact details that exist are the ones in Context. The clinic has no website and no separate emergency line, so never send a patient to either.\n- Never mention the knowledge base, your tools, your search, or the system to a patient. They are messaging the clinic front desk, not software. Say \"let me check that with the clinic team\", never \"according to our knowledge base\".\n- Trigger handoff for urgent, unclear, sensitive, complicated, outside-KB, staff-approval, or human-requested cases.\n- Booking details required before final booking, all five: full name (client_name), contact number (mobile_number), age (age), preferred schedule as a date and time (appointment_start / appointment_end), and reason for visit (service_or_concern). Do not set action to \"book\" until you have all five.\n- Age is a whole number of years. Ask for it once, gently, for example: May I ask for the patient's age? Never guess it. If the patient is a minor, keep the same warm tone and book as normal.\n- Use Check Availability before saying a slot is available. It returns the slots that are already BOOKED inside the window you ask about, so an empty result means that window is free. An empty or blank result is a successful answer and not a failure, so never repeat the call to double check it. If you have already called it once this turn and the slot came back free, go straight to the booking decision.\n- Valid mobile numbers are Philippine mobile numbers in one of two digit shapes: 09 plus 9 more digits (09171234567), or +63 9 plus 9 more digits (+639171234567). Ignore spaces, dashes, dots, and parentheses: \"+63 917 123 4567\" and \"0917-123-4567\" are both valid and mean 09171234567. If the digits match neither shape, do not proceed and do not correct it yourself. Show the client the correct format and ask again.\n- Only set action to \"book\" once you have a mobile number in a valid format.\n- NEVER call Check Availability on the turn where the client confirms a slot you already offered them. You checked it when you offered it, and the workflow independently re-checks the calendar immediately before it creates the event, so a second look is wasted. On a confirmation turn go straight to the booking decision.\n- Call Check Availability at most twice in a single turn. If you still do not have what you need after two calls, stop calling tools and reply with the best information you have.\n- Nothing is written to the calendar until the patient says yes to that exact appointment. Set patient_confirmed to true ONLY on the turn where they explicitly agree to the specific date, time and action you just put to them. Set it false on every other turn, including the turn where you are asking them to confirm. If you set an action of book, reschedule or cancel without patient_confirmed, the workflow will ask the patient to confirm for you and will not change anything, so you never need to invent a confirmation you did not receive.\n- Never tell a patient something is booked, moved or cancelled until you have set patient_confirmed to true and the workflow has confirmed it back to you. Saying it is done before that is how a patient ends up believing in an appointment that does not exist.\n- Booking is triggered by the action field, not by wording. On the SINGLE turn where the user confirms one exact available slot AND all required details are present, set action to \"book\", set booking_status to \"ready_to_book\", and fill appointment_start and appointment_end as ISO 8601 with the +08:00 offset (e.g. 2026-07-27T10:00:00+08:00). The workflow then creates the calendar event and CRM row after you respond.\n- Only use action \"book\" on that one confirmation turn. On any later turn about an appointment that is already booked (e.g. the user asks a follow-up question), use action \"answer\" and do NOT set action to \"book\" again, or the appointment will be double-booked.\n- Never set booking_status to \"confirmed\" yourself; the workflow sets that after it creates the event. Never tell the client that staff must confirm a booking, reschedule, or cancellation. The system completes them automatically, so confirm directly and warmly.\n- When a patient asks about their OWN appointment (do I have one, when is it, can you check my booking), collect the mobile number they booked with and set action to \"lookup\". The workflow looks it up and answers. Never answer that question from Check Availability, which reports the whole clinic's busy times including other patients', and never state or imply that a patient has an appointment unless a lookup returned one for them.\n- To CANCEL: collect the client name and the mobile number they booked with, then on the confirming turn set action to \"cancel\". To RESCHEDULE: collect the mobile number they booked with and the NEW preferred date and time, use Check Availability on the new time first, then on the confirming turn set action to \"reschedule\" with appointment_start and appointment_end set to the NEW time. The workflow finds and edits the calendar event automatically using the mobile number. Do not use handoff for a routine cancellation or reschedule.\n- If the requested time is taken, make ONE Check Availability call covering the whole clinic day (for example 09:00 to 19:00 with the +08:00 offset), read the booked slots it returns, and offer two or three free times from the gaps. Never call it once per candidate time. If that whole day is full, make ONE more call for the next day and offer times from that.\n- Format reply_text for chat readability. Separate distinct points with a blank line between paragraphs. Never send one long dense paragraph, and a single-thought reply stays a single line.\n- Write every list as markdown. Put each item on its own line and start it with a hyphen and a space, like \"- Consultations\". Leave a blank line before the first item. Never use a dot bullet character, and never put items on separate lines without the hyphen. Both of those collapse into one unreadable run-on line when the message is displayed.\n- This applies to every list you send, including services, payment methods, clinic hours, the details you need for a booking, and the times you are offering.\n- reply_text is plain conversational text, not a quoted string and not code. Never wrap the whole reply in quotation marks, and never write a backslash followed by the letter n to mean a line break. Put a real line break there instead.\n- Do not use em dashes or en dashes in reply_text; use a period, comma, or colon instead, and a plain hyphen for ranges like 9am-7pm.\n- Never work out a day of the week in your head, and never count days forward from today. The Date lookup table at the end of Context lists the next 14 days with the exact weekday for each date. Read every date you use straight out of that table. If the patient names a weekday, take the FIRST row whose weekday matches and use that row's date. If the patient names a date, use that row's weekday. The weekday you say to the patient, the date you put in appointment_start, and the date in your summary must all come from the same row. If what they asked for is not in the table, ask them for the exact date instead of guessing. If the patient names a weekday and gives no date, read it from the Next weekday lookup, which holds exactly one row per weekday. Never take a weekday from the 14 day table, because every weekday appears there twice and picking the later row books the patient a week later than they meant. If they clearly mean a week further out, ask them for the exact date.\n- Every response you produce must be a single JSON object that follows the required output schema exactly. Never reply with plain text outside the JSON, even in ongoing conversations. The client-facing message always goes in reply_text.\n\nContext:\nclinic_id={{ $json.clinic_id }}\nconversation_id={{ $json.conversation_id }}\nsource_channel={{ $json.source_channel }}\nsource_user_id={{ $json.source_user_id }}\nclient_name={{ $json.client_name }}\nmobile_number={{ $json.mobile_number }}\nnow={{ $now }}\ntoday={{ $now.setZone('Asia/Manila').toFormat('cccc, LLLL d, yyyy') }}\ntomorrow={{ $now.setZone('Asia/Manila').plus({ days: 1 }).toFormat('cccc, LLLL d, yyyy') }}\ntimezone={{ $json.clinic_timezone }}\nclinic_hours={{ $json.clinic_hours_text }}\nlast_walk_in={{ $json.clinic_last_walk_in }}\nclinic_address={{ $json.clinic_address }}\nclinic_mobile={{ $json.clinic_mobile }}\nclinic_email={{ $json.clinic_email }}\nclinic_dentist={{ $json.clinic_dentist }}\npatient_language={{ $json.patient_language }}\n\nDate lookup. The next 14 days with the exact weekday for each date. Read dates out of this table, never count days yourself:\n{{ Array.from({ length: 14 }, (_, i) => $now.setZone('Asia/Manila').plus({ days: i })).map(d => d.toFormat('cccc, LLLL d, yyyy') + ' = ' + d.toFormat('yyyy-MM-dd')).join('\\n') }}\n\nNext weekday lookup. Exactly one row per weekday, always the soonest. When the patient names a weekday with no date, use THIS table and no other:\n{{ Array.from({ length: 7 }, (_, i) => $now.setZone('Asia/Manila').plus({ days: i })).map(d => d.toFormat('cccc') + ' = ' + d.toFormat('yyyy-MM-dd') + (d.weekday === 7 ? ' (closed, Sunday)' : '')).join('\\n') }}"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "afd-anthropic-chat",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_CRED_ANTHROPIC",
+          "name": "Anthropic account"
+        }
+      },
+      "position": [
+        624,
+        1664
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-haiku-4-5",
+          "cachedResultName": "Claude Haiku 4.5"
+        },
+        "options": {
+          "maxTokensToSample": 700
+        }
+      }
+    },
+    {
+      "id": "afd-memory",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        1040,
+        1664
+      ],
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Prepare Conversation State').item.json.conversation_id }}",
+        "contextWindowLength": 20
+      }
+    },
+    {
+      "id": "afd-rag",
+      "name": "Supabase RAG Tool",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_CRED_SUPABASE",
+          "name": "Supabase account"
+        }
+      },
+      "position": [
+        1664,
+        1664
+      ],
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolName": "search_knowledge",
+        "toolDescription": "Search the clinic knowledge base for factual answers about services, prices, hours, location, policies, and preparation. Always use this before answering clinic facts.",
+        "tableName": "documents",
+        "topK": 3,
+        "options": {
+          "queryName": "match_documents"
+        }
+      }
+    },
+    {
+      "id": "afd-embeddings",
+      "name": "OpenAI Embeddings",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_CRED_OPENAI",
+          "name": "OpenAI account"
+        }
+      },
+      "position": [
+        1664,
+        1872
+      ],
+      "parameters": {
+        "options": {
+          "dimensions": 1536
+        }
+      }
+    },
+    {
+      "id": "afd-check-availability",
+      "name": "Check Availability",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [
+        832,
+        1664
+      ],
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Check what is already booked on the clinic calendar between Start_Time and End_Time. This reports the WHOLE CLINIC's busy times, including other patients' appointments, and it cannot tell you who any of them belong to. Never use it to answer whether a particular patient has an appointment, and never describe anything it returns as the patient's own booking. Returns the list of BOOKED slots inside that window, each with a start and end. An empty result means the whole window is free. To offer alternatives, ask for one WIDE window covering the whole clinic day (for example 09:00 to 19:00 +08:00) and read the free gaps from what comes back. Do not call this once per candidate time. An empty or blank response is a COMPLETE and SUCCESSFUL answer: it means nothing is booked and the whole window is free. It is never an error and never means the tool failed. Do not call this tool again to double check an empty result. Never call it more than twice in one turn.",
+        "resource": "calendar",
+        "operation": "availability",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_CALENDAR_ID"
+        },
+        "timeMin": "={{ $fromAI('Start_Time', 'Requested appointment start in ISO 8601 with timezone', 'string') }}",
+        "timeMax": "={{ $fromAI('End_Time', 'Requested appointment end in ISO 8601 with timezone', 'string') }}",
+        "options": {
+          "outputFormat": "bookedSlots"
+        }
+      },
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REPLACE_CRED_GCAL",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "id": "afd-output-parser",
+      "name": "Structured Decision Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1248,
+        1664
+      ],
+      "parameters": {
+        "autoFix": true,
+        "schemaType": "manual",
+        "inputSchema": "{\"type\":\"object\",\"properties\":{\"reply_text\":{\"type\":\"string\",\"description\":\"Client-facing reply\"},\"patient_confirmed\":{\"type\":\"boolean\",\"description\":\"True ONLY on the turn where the patient explicitly agrees to this exact booking, reschedule or cancellation. False at every other time, including when you are still asking them to confirm.\"},\"action\":{\"type\":\"string\",\"enum\":[\"answer\",\"collect_missing_info\",\"book\",\"reschedule\",\"cancel\",\"lookup\",\"handoff\"]},\"inquiry_type\":{\"type\":\"string\",\"enum\":[\"general\",\"pricing\",\"hours\",\"location\",\"service\",\"booking\",\"reschedule\",\"cancel\",\"urgent\",\"other\"]},\"client_name\":{\"type\":[\"string\",\"null\"]},\"mobile_number\":{\"type\":[\"string\",\"null\"]},\"age\":{\"type\":[\"string\",\"null\"],\"description\":\"Patient age in whole years\"},\"service_or_concern\":{\"type\":[\"string\",\"null\"]},\"booking_status\":{\"type\":\"string\",\"enum\":[\"none\",\"pending\",\"ready_to_book\",\"confirmed\",\"rescheduled\",\"cancelled\",\"needs_review\"]},\"appointment_start\":{\"type\":[\"string\",\"null\"],\"description\":\"ISO 8601 with timezone offset, e.g. 2026-07-27T10:00:00+08:00\"},\"appointment_end\":{\"type\":[\"string\",\"null\"],\"description\":\"ISO 8601 with timezone offset\"},\"staff_review_required\":{\"type\":\"boolean\"},\"conversation_summary\":{\"type\":\"string\",\"description\":\"Short summary for staff/CRM\"},\"human_task_required\":{\"type\":\"boolean\"},\"human_task_type\":{\"type\":[\"string\",\"null\"]},\"human_task_note\":{\"type\":[\"string\",\"null\"]},\"staff_email_required\":{\"type\":\"boolean\"},\"staff_email_subject\":{\"type\":[\"string\",\"null\"]},\"staff_email_body\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"reply_text\",\"action\",\"inquiry_type\",\"booking_status\",\"conversation_summary\"]}"
+      }
+    },
+    {
+      "id": "afd-anthropic-fixer",
+      "name": "Anthropic Fixer Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_CRED_ANTHROPIC",
+          "name": "Anthropic account"
+        }
+      },
+      "position": [
+        1248,
+        1872
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-haiku-4-5",
+          "cachedResultName": "Claude Haiku 4.5"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-attach-state",
+      "name": "Attach Conversation State",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1248,
+        416
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "attach-base",
+              "name": "base",
+              "value": "={{ $('Prepare Conversation State').item.json }}",
+              "type": "object"
+            },
+            {
+              "id": "attach-decision",
+              "name": "decision",
+              "value": "={{ $json.output }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-parse-agent",
+      "name": "Parse Agent Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        416
+      ],
+      "parameters": {
+        "jsCode": "// Canonical PH mobile: 09 + 9 digits. '+63 9' + 9 digits resolves to the same number.\nfunction normalizePH(raw) {\n  if (raw === null || raw === undefined) return { value: null, valid: false, given: false };\n  const given = String(raw).trim();\n  if (!given) return { value: null, valid: false, given: false };\n  let n = given.replace(/[^\\d+]/g, '');\n  if (n.startsWith('+63')) n = '0' + n.slice(3);\n  else if (n.startsWith('63') && n.length === 12) n = '0' + n.slice(2);\n  else if (n.startsWith('9') && n.length === 10) n = '0' + n;\n  n = n.replace(/\\D/g, '');\n  const valid = /^09\\d{9}$/.test(n);\n  return { value: valid ? n : given, valid, given: true };\n}\n\n// Age arrives as free text (\"34\", \"34 years old\"). Keep the digits, sanity check\n// the range, and hand a clean string to the sheet.\nfunction normalizeAge(raw) {\n  if (raw === null || raw === undefined) return { value: null, valid: false, given: false };\n  const given = String(raw).trim();\n  if (!given) return { value: null, valid: false, given: false };\n  const m = given.match(/\\d{1,3}/);\n  if (!m) return { value: given, valid: false, given: true };\n  const n = parseInt(m[0], 10);\n  const valid = n >= 0 && n <= 120;\n  return { value: valid ? String(n) : given, valid, given: true };\n}\n\n// Prompt-only enforcement of the no-dash rule failed on every long reply during\n// live testing: the knowledge base carries en dashes inside price ranges and the\n// model adds em dashes of its own. Strip them here so the rule cannot be broken.\nfunction stripDashes(raw) {\n  if (raw === null || raw === undefined) return raw;\n  return String(raw)\n    // a dash opening a line is a bullet, keep it as one\n    .replace(/^([ \\t]*)[\\u2014\\u2013][ \\t]*/gm, '$1- ')\n    // en dash between numbers is a range: 1,000-2,000\n    .replace(/(\\d)\\s*\\u2013\\s*(\\d)/g, '$1-$2')\n    // a dash joining two weekdays is a day range, not a clause break:\n    // Monday - Friday. Without this the catch-all below turned clinic hours\n    // into 'Monday, Friday', which misstates the schedule to a patient.\n    .replace(/\\b((?:Mon|Tues|Tue|Wednes|Wed|Thurs|Thur|Thu|Fri|Satur|Sat|Sun)(?:day)?)\\s*[\\u2014\\u2013]\\s*((?:Mon|Tues|Tue|Wednes|Wed|Thurs|Thur|Thu|Fri|Satur|Sat|Sun)(?:day)?)\\b/gi, '$1-$2')\n    // a dash after AM/PM and before a number is a time range: 9:00 AM - 7:00 PM.\n    // The numeric rule above misses these because the left side ends in a letter.\n    .replace(/([AaPp]\\.?[Mm]\\.?)\\s*[\\u2014\\u2013]\\s*(\\d)/g, '$1-$2')\n    // anything else reads as a clause break, which a comma handles\n    .replace(/\\s*[\\u2014\\u2013]\\s*/g, ', ');\n}\n\n// Live chat showed replies arriving JSON-encoded: wrapped in quotes, with line\n// breaks as the two characters backslash-n. The prompt says not to, but the\n// model does it anyway on long replies, so undo the encoding here.\nfunction decodeEscapedText(raw) {\n  if (raw === null || raw === undefined) return raw;\n  let s = String(raw)\n    .replace(/\\\\r\\\\n/g, '\\n')\n    .replace(/\\\\[rn]/g, '\\n')\n    .replace(/\\\\t/g, ' ')\n    .replace(/\\\\\"/g, '\"');\n  // a quote pair wrapping the WHOLE reply is the model quoting itself, not\n  // punctuation, so drop it. Nested twice at most.\n  for (let i = 0; i < 2; i++) {\n    const t = s.trim();\n    if (t.length > 1 && /^[\"\\u201C]/.test(t) && /[\"\\u201D]$/.test(t)) s = t.slice(1, -1);\n    else break;\n  }\n  return s.trim();\n}\n\n// Literal bullet characters are not markdown, so a run of them renders as one collapsed\n// line. Live testing produced exactly that for the 14 item services list. Rewrite them as\n// hyphen bullets and make sure a list is separated from the paragraph above it.\n// Deliberately narrow: it only touches lines that ALREADY open with a bullet character. A\n// broader rule here is how stripDashes once turned \"Monday-Friday\" into \"Monday, Friday\".\nfunction normalizeLists(raw) {\n  if (raw === null || raw === undefined) return raw;\n  const lines = String(raw).split('\\n');\n  const out = [];\n  for (const original of lines) {\n    const line = original.replace(/^([ \\t]*)[\\u2022\\u25CF\\u25AA\\u25E6\\u2023\\u00B7]+[ \\t]*/, '$1- ');\n    const isItem = /^[ \\t]*- /.test(line);\n    const prev = out.length ? out[out.length - 1] : '';\n    if (isItem && prev.trim() !== '' && !/^[ \\t]*- /.test(prev)) out.push('');\n    out.push(line);\n  }\n  return out.join('\\n');\n}\n\nfunction cleanText(raw) {\n  const decoded = decodeEscapedText(raw);\n  if (decoded === null || decoded === undefined) return decoded;\n  return normalizeLists(stripDashes(decoded));\n}\n\nconst base = $json.base || {};\nconst decision = $json.decision || {};\nconst mob = normalizePH(decision.mobile_number || base.mobile_number);\nconst age = normalizeAge(decision.age || base.age);\nconst merged = {\n  ...base,\n  reply_text: cleanText(decision.reply_text) || 'Thanks. The clinic team will confirm this for you.',\n  action: decision.action || 'answer',\n  inquiry_type: decision.inquiry_type || 'other',\n  client_name: decision.client_name || base.client_name || null,\n  mobile_number: mob.value,\n  mobile_valid: mob.valid,\n  mobile_given: mob.given,\n  age: age.value,\n  age_valid: age.valid,\n  age_given: age.given,\n  service_or_concern: decision.service_or_concern || null,\n  booking_status: decision.booking_status || 'none',\n  patient_confirmed: decision.patient_confirmed === true,\n  appointment_start: decision.appointment_start || null,\n  appointment_end: decision.appointment_end || null,\n  calendar_event_id: decision.calendar_event_id || null,\n  handoff_reason: decision.handoff_reason || null,\n  staff_review_required: Boolean(decision.staff_review_required),\n  conversation_summary: cleanText(decision.conversation_summary) || '',\n  human_task_required: Boolean(\n    decision.human_task_required || decision.action === 'handoff' || decision.staff_review_required\n  ),\n  human_task_type: decision.human_task_type || null,\n  human_task_note: decision.human_task_note || null,\n  staff_email_required: Boolean(\n    decision.staff_email_required || decision.action === 'handoff' || decision.staff_review_required\n  ),\n  staff_email_subject: decision.staff_email_subject || `AI front desk: ${decision.action || 'update'}`,\n  staff_email_body: cleanText(decision.staff_email_body || decision.conversation_summary || decision.reply_text) || '',\n  processed_at: new Date().toISOString()\n};\nreturn [{ json: merged }];"
+      }
+    },
+    {
+      "id": "afd-if-ready-book",
+      "name": "Ready To Book?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2080,
+        416
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "action-book-condition",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "book",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "has-start-condition",
+              "leftValue": "={{ $json.appointment_start }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "has-end-condition",
+              "leftValue": "={{ $json.appointment_end }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-create-calendar-event",
+      "name": "Create Calendar Appointment",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        4160,
+        624
+      ],
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_CALENDAR_ID"
+        },
+        "start": "={{ $json.appointment_start }}",
+        "end": "={{ $json.appointment_end }}",
+        "additionalFields": {
+          "summary": "={{ 'Appointment - ' + ($json.client_name || 'Client') + ' - ' + ($json.service_or_concern || 'Consultation') }}",
+          "description": "={{ 'Conversation ID: ' + $json.conversation_id + '\\nMobile: ' + ($json.mobile_number || '') + '\\nAge: ' + ($json.age || '') + '\\nSource: ' + $json.source_channel + '\\nConcern: ' + ($json.service_or_concern || '') + '\\nSummary: ' + ($json.conversation_summary || '') + '\\nStaff review required: ' + $json.staff_review_required }}"
+        }
+      },
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REPLACE_CRED_GCAL",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "id": "afd-attach-booking",
+      "name": "Attach Booking Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4368,
+        624
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "attach-booking",
+              "name": "booking",
+              "value": "={{ $('Parse Agent Decision').item.json }}",
+              "type": "object"
+            },
+            {
+              "id": "attach-event",
+              "name": "event",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-compose-booking-success",
+      "name": "Compose Booking Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4576,
+        624
+      ],
+      "parameters": {
+        "jsCode": "const original = $json.booking || {};\nconst event = $json.event || {};\nconst start = original.appointment_start;\nconst serviceRaw = original.service_or_concern || 'your appointment';\n// this opens a sentence in the booking confirmation, which is the most screenshotted\n// message the clinic sends, so it should not start lowercase\nconst service = serviceRaw.charAt(0).toUpperCase() + serviceRaw.slice(1);\nlet when = start;\ntry { const d = DateTime.fromISO(start).setZone('Asia/Manila'); if (d.isValid) when = d.toFormat('cccc, MMM d') + ' at ' + d.toFormat('h:mm a'); } catch (e) {}\nconst reply = `You're all booked!\\n\\n${service} on ${when}.\\n\\nIf you ever need to reschedule or cancel, just message me here. See you soon!`;\nreturn [{ json: {\n  ...original,\n  calendar_event_id: event.id || event.htmlLink || original.calendar_event_id || null,\n  booking_status: 'confirmed',\n  action: 'book',\n  reply_text: reply,\n  human_task_required: false,\n  human_task_type: null,\n  human_task_note: null,\n  staff_email_required: false,\n  staff_email_subject: null,\n  staff_email_body: null\n}}];"
+      }
+    },
+    {
+      "id": "afd-append-crm-booking",
+      "name": "Append Bookings",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_CRED_GSHEETS",
+          "name": "Google Sheets account"
+        }
+      },
+      "position": [
+        5200,
+        1248
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_CRM_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Bookings"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "Event ID"
+          ],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      }
+    },
+    {
+      "id": "afd-append-crm-conversation",
+      "name": "Append All Chats",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_CRED_GSHEETS",
+          "name": "Google Sheets account"
+        }
+      },
+      "position": [
+        5200,
+        624
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_CRM_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "All Chats"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      }
+    },
+    {
+      "id": "afd-if-staff-email",
+      "name": "Staff Email Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4992,
+        832
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "staff-email-needed-condition",
+              "leftValue": "={{ $json.staff_email_required }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-send-staff-email",
+      "name": "Send Staff Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        5200,
+        832
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_CRED_GMAIL",
+          "name": "Gmail account"
+        }
+      },
+      "parameters": {
+        "sendTo": "REPLACE_STAFF_ALERT_EMAIL",
+        "subject": "={{ $json.staff_email_subject }}",
+        "emailType": "text",
+        "message": "={{ $json.staff_email_body }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-respond-generic",
+      "name": "Respond Generic Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        5200,
+        416
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { reply_text: $json.reply_text, action: $json.action, booking_status: $json.booking_status, conversation_id: $json.conversation_id } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-error-trigger",
+      "name": "Workflow Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        2080
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "afd-error-email",
+      "name": "Email Workflow Error To Staff",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        208,
+        2080
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_CRED_GMAIL",
+          "name": "Gmail account"
+        }
+      },
+      "parameters": {
+        "sendTo": "REPLACE_STAFF_ALERT_EMAIL",
+        "subject": "AI front desk workflow error",
+        "emailType": "text",
+        "message": "={{ JSON.stringify($json, null, 2) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-if-human-task",
+      "name": "Human Task Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4992,
+        1040
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "human-task-needed-condition",
+              "leftValue": "={{ $json.human_task_required }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-append-human-task",
+      "name": "Append To Do",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_CRED_GSHEETS",
+          "name": "Google Sheets account"
+        }
+      },
+      "position": [
+        5408,
+        1040
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_CRM_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "To Do"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      }
+    },
+    {
+      "id": "afd-build-chat-row",
+      "name": "Build Chat Row",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4992,
+        624
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "afd-build-chat-row-a0",
+              "name": "Date",
+              "value": "={{ $json.received_at ? DateTime.fromISO($json.received_at).setZone('Asia/Manila').toFormat('MMM d, h:mm a') : '' }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-chat-row-a1",
+              "name": "Patient",
+              "value": "={{ $json.client_name || '(unknown)' }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-chat-row-a2",
+              "name": "Channel",
+              "value": "={{ $json.source_channel }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-chat-row-a3",
+              "name": "Type",
+              "value": "={{ $json.inquiry_type }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-chat-row-a4",
+              "name": "Summary",
+              "value": "={{ $json.conversation_summary }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-chat-row-a5",
+              "name": "Outcome",
+              "value": "={{ ({answer:'Answered',collect_missing_info:'Collecting details',book:'Booked',reschedule:'Rescheduled',cancel:'Cancelled',handoff:'Needs human'})[$json.action] || $json.action }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-build-booking-row",
+      "name": "Build Booking Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4992,
+        1248
+      ],
+      "parameters": {
+        "jsCode": "// Bookings is matched on Event ID, which Google Calendar assigns per\n// appointment and keeps stable across reschedules. Matching on Phone instead\n// would merge two people who share a number (a family) into a single row.\n//\n// Any key we leave out is left untouched on the existing row, so unknown\n// values are omitted rather than written as blanks that would erase good data.\nconst j = $json;\nlet appt = null;\nif (j.appointment_start) {\n  const d = DateTime.fromISO(j.appointment_start).setZone('Asia/Manila');\n  if (d.isValid) appt = d.toFormat('ccc MMM d, h:mm a');\n}\nconst row = {\n  'Event ID': j.calendar_event_id || null,\n  'Appointment': appt,\n  // The name is captured properly at booking time. Reschedule and cancel turns\n  // often carry a degraded version of it (Maria Cruz -> Marian -> Maria), so\n  // they must never rewrite it.\n  'Patient': j.action === 'book' ? (j.client_name || null) : null,\n  // Age travels with the name, for the same reason: only the booking turn is\n  // trusted to set it.\n  'Age': j.action === 'book' ? (j.age || null) : null,\n  'Service': j.service_or_concern || null,\n  'Phone': j.mobile_number || null,\n  'Status': j.booking_row_status || 'Confirmed',\n  'Notes': j.booking_row_notes || null\n};\nconst out = {};\nfor (const k in row) {\n  if (row[k] !== null && row[k] !== undefined && row[k] !== '') out[k] = row[k];\n}\nreturn [{ json: out }];"
+      }
+    },
+    {
+      "id": "afd-build-todo-row",
+      "name": "Build ToDo Row",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5200,
+        1040
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "afd-build-todo-row-a0",
+              "name": "Date",
+              "value": "={{ $json.received_at ? DateTime.fromISO($json.received_at).setZone('Asia/Manila').toFormat('MMM d, h:mm a') : '' }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-todo-row-a1",
+              "name": "Patient",
+              "value": "={{ $json.client_name || '(unknown)' }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-todo-row-a2",
+              "name": "Phone",
+              "value": "={{ $json.mobile_number || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-todo-row-a3",
+              "name": "What they need",
+              "value": "={{ ({booking_confirmation:'Send booking confirmation',urgent_callback:'Urgent callback',callback:'Call the patient back',reschedule:'Reschedule appointment',cancellation:'Cancel appointment'})[$json.human_task_type] || $json.human_task_type || 'Follow up' }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-todo-row-a4",
+              "name": "Details",
+              "value": "={{ $json.human_task_note || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-todo-row-a5",
+              "name": "Priority",
+              "value": "={{ ($json.human_task_type || '').toLowerCase().includes('urgent') || $json.inquiry_type === 'urgent' ? 'Urgent' : 'Normal' }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-todo-row-a6",
+              "name": "Status",
+              "value": "Open",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-todo-row-a7",
+              "name": "Notes",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-check-hours",
+      "name": "Check Hours",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2288,
+        624
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "afd-check-hours-a0",
+              "name": "time_ok",
+              "value": "={{ (() => { const p = $('Prepare Conversation State').item.json; const sRaw = $json.appointment_start; const eRaw = $json.appointment_end; const s = DateTime.fromISO(sRaw).setZone(p.clinic_timezone); const e = eRaw ? DateTime.fromISO(eRaw).setZone(p.clinic_timezone) : s.plus({ hours: 1 }); if (!s.isValid || !e.isValid) return false; if (s < DateTime.now()) return false; if ((p.clinic_closed_weekdays || []).includes(s.weekday)) return false; if (s.weekday !== e.weekday) return false; const sMin = s.hour * 60 + s.minute; const eMin = e.hour * 60 + e.minute; return sMin >= p.clinic_open_hour * 60 && eMin <= p.clinic_close_hour * 60; })() }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-if-time-ok",
+      "name": "Booking Time OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2496,
+        624
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "time-ok-cond",
+              "leftValue": "={{ $json.time_ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-build-reject",
+      "name": "Build Reject Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2496,
+        832
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "afd-build-reject-a0",
+              "name": "reply_text",
+              "value": "={{ 'Sorry, that time is outside our clinic hours (' + $('Prepare Conversation State').item.json.clinic_hours_text + ') or already past. Could you pick another time that works for you?' }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-reject-a1",
+              "name": "action",
+              "value": "collect_missing_info",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-reject-a2",
+              "name": "booking_status",
+              "value": "pending",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-reject-a3",
+              "name": "human_task_required",
+              "value": "={{ false }}",
+              "type": "boolean"
+            },
+            {
+              "id": "afd-build-reject-a4",
+              "name": "staff_email_required",
+              "value": "={{ false }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-if-manage",
+      "name": "Reschedule or Cancel?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1872,
+        416
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "manage-resched",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "reschedule",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "manage-cancel",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "cancel",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "manage-lookup",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "lookup",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-build-manage",
+      "name": "Manage Not Found",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2704,
+        1248
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ (() => { const dec = ($json.decision) || $('Parse Agent Decision').item.json; const what = dec.action === 'cancel' ? 'CANCEL' : 'RESCHEDULE'; const needsName = ($json.match_reason === 'ambiguous-no-name'); const isLookup = (dec.action === 'lookup'); return { ...dec, reply_text: isLookup ? 'I do not see an upcoming appointment under that mobile number. If you booked using a different number, tell me which one and I will check that instead.' : needsName ? 'I found more than one upcoming appointment under that mobile number. Could you tell me the full name on the appointment, so I change the right one?' : 'Hmm, I could not find an upcoming appointment under that mobile number. Could you double-check the number you used when booking?\\n\\nI have also alerted our team so they can help sort this out.', human_task_required: !needsName && !isLookup, human_task_type: dec.action === 'cancel' ? 'cancellation' : 'reschedule', human_task_note: 'Patient wants to ' + what + ' but no matching upcoming calendar event was found.\\nName: ' + (dec.client_name || '') + '\\nPhone: ' + (dec.mobile_number || '') + '\\nNew time requested: ' + (dec.appointment_start || 'not given') + '\\nLookup: ' + ($json.match_reason || 'not-found') + ($json.match_candidates ? ' (found under this number: ' + $json.match_candidates + ')' : '') + '\\nContext: ' + (dec.conversation_summary || ''), staff_email_required: false, inquiry_type: dec.action }; })() }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-build-fallback",
+      "name": "Build Fallback Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1248,
+        624
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "afd-build-fallback-a0",
+              "name": "reply_text",
+              "value": "Thanks for your message! Let me get one of our staff to help you with this. They will follow up with you shortly.",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-fallback-a1",
+              "name": "action",
+              "value": "handoff",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-fallback-a2",
+              "name": "inquiry_type",
+              "value": "other",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-fallback-a3",
+              "name": "booking_status",
+              "value": "needs_review",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-fallback-a4",
+              "name": "conversation_summary",
+              "value": "AI could not process this message automatically; needs staff review.",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-fallback-a5",
+              "name": "human_task_required",
+              "value": "={{ true }}",
+              "type": "boolean"
+            },
+            {
+              "id": "afd-build-fallback-a6",
+              "name": "human_task_type",
+              "value": "callback",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-fallback-a7",
+              "name": "human_task_note",
+              "value": "={{ 'AI could not process this message automatically. Original message: ' + ($json.message_text || '') }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-fallback-a8",
+              "name": "staff_email_required",
+              "value": "={{ false }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-find-appt",
+      "name": "Find Appointment",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2080,
+        1040
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REPLACE_CRED_GCAL",
+          "name": "Google Calendar account"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 10,
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_CALENDAR_ID"
+        },
+        "timeMin": "={{ $now.toISO() }}",
+        "options": {
+          "query": "={{ $json.mobile_number || 'no-mobile-given-x' }}",
+          "orderBy": "startTime"
+        },
+        "timeMax": "={{ $now.plus({ days: 90 }).toISO() }}"
+      }
+    },
+    {
+      "id": "afd-attach-manage",
+      "name": "Attach Manage Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2496,
+        1040
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "am-dec",
+              "name": "decision",
+              "value": "={{ $('Parse Agent Decision').item.json }}",
+              "type": "object"
+            },
+            {
+              "id": "am-id",
+              "name": "event_id",
+              "value": "={{ $json.id || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "am-start",
+              "name": "event_start",
+              "value": "={{ $json.start ? ($json.start.dateTime || $json.start.date) : '' }}",
+              "type": "string"
+            },
+            {
+              "id": "am-sum",
+              "name": "event_summary",
+              "value": "={{ $json.summary || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "am-go",
+              "name": "proceed",
+              "value": "={{ ($json.matched === true && $json.id && ($('Parse Agent Decision').item.json.action === 'cancel' || $('Parse Agent Decision').item.json.action === 'lookup' || $('Parse Agent Decision').item.json.appointment_start)) ? true : false }}",
+              "type": "boolean"
+            },
+            {
+              "id": "am-end",
+              "name": "event_end",
+              "value": "={{ $json.end ? ($json.end.dateTime || $json.end.date) : '' }}",
+              "type": "string"
+            },
+            {
+              "id": "am-newstart",
+              "name": "new_start",
+              "value": "={{ $('Parse Agent Decision').item.json.appointment_start || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "am-newend",
+              "name": "new_end",
+              "value": "={{ (() => { const dec = $('Parse Agent Decision').item.json; const s = $json.start ? ($json.start.dateTime || $json.start.date) : null; const e = $json.end ? ($json.end.dateTime || $json.end.date) : null; if (!dec.appointment_start) return ''; if (s && e) { const dur = DateTime.fromISO(e).diff(DateTime.fromISO(s)); return DateTime.fromISO(dec.appointment_start).plus(dur).toISO(); } return dec.appointment_end || ''; })() }}",
+              "type": "string"
+            },
+            {
+              "id": "am-reason",
+              "name": "match_reason",
+              "value": "={{ $json.match_reason || 'unknown' }}",
+              "type": "string"
+            },
+            {
+              "id": "am-cands",
+              "name": "match_candidates",
+              "value": "={{ $json.candidate_names || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-if-found",
+      "name": "Appointment Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2704,
+        1040
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "found-cond",
+              "leftValue": "={{ $json.proceed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-if-cancel",
+      "name": "Cancel or Move?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3328,
+        1040
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cancel-cond",
+              "leftValue": "={{ $json.decision.action }}",
+              "rightValue": "cancel",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-delete-appt",
+      "name": "Delete Appointment",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        3536,
+        1040
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REPLACE_CRED_GCAL",
+          "name": "Google Calendar account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "resource": "event",
+        "operation": "delete",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_CALENDAR_ID"
+        },
+        "eventId": "={{ $json.event_id }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-update-appt",
+      "name": "Update Appointment",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        4576,
+        1248
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REPLACE_CRED_GCAL",
+          "name": "Google Calendar account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "resource": "event",
+        "operation": "update",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_CALENDAR_ID"
+        },
+        "eventId": "={{ $json.event_id }}",
+        "useDefaultReminders": true,
+        "updateFields": {
+          "start": "={{ $json.new_start }}",
+          "end": "={{ $json.new_end }}"
+        }
+      }
+    },
+    {
+      "id": "afd-compose-cancel",
+      "name": "Compose Cancel Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3744,
+        1040
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ (() => { const d = $('Attach Manage Context').item.json; const dec = d.decision; const w = d.event_start ? DateTime.fromISO(d.event_start).setZone('Asia/Manila').toFormat('ccc, MMM d h:mm a') : 'your scheduled time'; return { ...dec, reply_text: 'Done! Your appointment on ' + w + ' has been cancelled.\\n\\nIf you would like to book again, just message me here anytime.', action: 'cancel', inquiry_type: 'cancel', appointment_start: d.event_start, booking_row_status: 'Cancelled', booking_row_notes: 'Cancelled by patient via chat', conversation_summary: (dec.client_name || 'Patient') + ' cancelled appointment on ' + w + '. ' + (d.event_summary || ''), calendar_event_id: d.event_id, human_task_required: false, staff_email_required: false }; })() }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-compose-resched",
+      "name": "Compose Reschedule Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4784,
+        1248
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ (() => { const d = $('Attach Manage Context').item.json; const dec = d.decision; const oldW = d.event_start ? DateTime.fromISO(d.event_start).setZone('Asia/Manila').toFormat('ccc, MMM d h:mm a') : 'the old time'; const newW = DateTime.fromISO(d.new_start).setZone('Asia/Manila').toFormat('ccc, MMM d h:mm a'); return { ...dec, reply_text: 'All set!\\n\\nYour appointment has been moved to ' + newW + '.\\n\\nSee you then!', appointment_start: d.new_start, appointment_end: d.new_end, booking_row_status: 'Rescheduled', booking_row_notes: 'Moved from ' + oldW, conversation_summary: (dec.client_name || 'Patient') + ' rescheduled from ' + oldW + ' to ' + newW + '.', calendar_event_id: d.event_id, human_task_required: false, staff_email_required: false }; })() }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-if-mobile",
+      "name": "Mobile Needs Recheck?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1664,
+        416
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "mobile-action-needed",
+              "leftValue": "={{ ['book','reschedule','cancel'].includes($json.action) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "mobile-invalid",
+              "leftValue": "={{ $json.mobile_valid }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-build-mobile-recheck",
+      "name": "Build Mobile Recheck Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1664,
+        208
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "mr-a0",
+              "name": "reply_text",
+              "value": "={{ ($json.mobile_given ? 'The number I have is ' + $json.mobile_number + ', which does not look complete.' : 'I still need your mobile number before I can do that.') + '\\n\\nA Philippine mobile number is 09 followed by 9 more digits, like 09171234567. You can also write it as +639171234567.\\n\\nCould you send it again?' }}",
+              "type": "string"
+            },
+            {
+              "id": "mr-a1",
+              "name": "action",
+              "value": "collect_missing_info",
+              "type": "string"
+            },
+            {
+              "id": "mr-a2",
+              "name": "booking_status",
+              "value": "pending",
+              "type": "string"
+            },
+            {
+              "id": "mr-a3",
+              "name": "staff_email_required",
+              "value": "={{ false }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-slot-free",
+      "name": "Slot Still Free?",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        3536,
+        624
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REPLACE_CRED_GCAL",
+          "name": "Google Calendar account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "resource": "calendar",
+        "operation": "availability",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_CALENDAR_ID"
+        },
+        "timeMin": "={{ $json.appointment_start }}",
+        "timeMax": "={{ $json.appointment_end }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-attach-avail",
+      "name": "Attach Availability",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3744,
+        624
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ {...$('Check Hours').item.json, slot_free: $json.available === true} }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-if-slot-free",
+      "name": "Slot Free?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3952,
+        624
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "slot-free-cond",
+              "leftValue": "={{ $json.slot_free }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-build-slot-taken",
+      "name": "Build Slot Taken Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3952,
+        832
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "st-a0",
+              "name": "reply_text",
+              "value": "Ah, that slot was just taken. Sorry about that!\n\nCould you pick another time? I can check what is open for you.",
+              "type": "string"
+            },
+            {
+              "id": "st-a1",
+              "name": "action",
+              "value": "collect_missing_info",
+              "type": "string"
+            },
+            {
+              "id": "st-a2",
+              "name": "booking_status",
+              "value": "pending",
+              "type": "string"
+            },
+            {
+              "id": "st-a3",
+              "name": "human_task_required",
+              "value": "={{ false }}",
+              "type": "boolean"
+            },
+            {
+              "id": "st-a4",
+              "name": "staff_email_required",
+              "value": "={{ false }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-find-conflicts",
+      "name": "Find Conflicts",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        3744,
+        1248
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REPLACE_CRED_GCAL",
+          "name": "Google Calendar account"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "returnAll": true,
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_CALENDAR_ID"
+        },
+        "timeMin": "={{ $json.new_start }}",
+        "timeMax": "={{ $json.new_end }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-agg-conflicts",
+      "name": "Aggregate Conflicts",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        3952,
+        1248
+      ],
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "events",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-attach-move",
+      "name": "Attach Move Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4160,
+        1248
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ (() => { const ctx = $('Attach Manage Context').item.json; const evs = $json.events || []; return { ...ctx, conflict: evs.some(e => e && e.id && e.id !== ctx.event_id) }; })() }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-if-move-free",
+      "name": "New Slot Free?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4368,
+        1248
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "move-free-cond",
+              "leftValue": "={{ $json.conflict }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-build-move-busy",
+      "name": "Build Move Busy Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4368,
+        1456
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ (() => { const d = $('Attach Manage Context').item.json; const dec = d.decision; return { ...dec, reply_text: 'That new time is already booked, so I left your original appointment as it is.\\n\\nCould you pick another time? I can check what is open for you.', action: 'collect_missing_info', booking_status: 'pending', human_task_required: false, staff_email_required: false }; })() }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-build-reminder-checklist",
+      "name": "Build Reminder Checklist Row",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4992,
+        1456
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "afd-build-reminder-checklist-a0",
+              "name": "Date",
+              "value": "={{ $json.appointment_start ? DateTime.fromISO($json.appointment_start).setZone('Asia/Manila').toFormat('ccc MMM d, h:mm a') : '' }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-reminder-checklist-a1",
+              "name": "Patient",
+              "value": "={{ $json.client_name || '(unknown)' }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-reminder-checklist-a2",
+              "name": "Phone",
+              "value": "={{ $json.mobile_number || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-reminder-checklist-a3",
+              "name": "What they need",
+              "value": "Appointment reminder",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-reminder-checklist-a4",
+              "name": "Details",
+              "value": "={{ ($json.booking_row_status === 'Rescheduled' ? 'MOVED - ' : '') + ($json.service_or_concern || 'service not specified') + ' - booked via ' + ($json.source_channel || 'unknown') }}",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-reminder-checklist-a5",
+              "name": "Priority",
+              "value": "Normal",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-reminder-checklist-a6",
+              "name": "Status",
+              "value": "Open",
+              "type": "string"
+            },
+            {
+              "id": "afd-build-reminder-checklist-a7",
+              "name": "Notes",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-append-reminder-checklist",
+      "name": "Append Reminder Checklist",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        5200,
+        1456
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_CRED_GSHEETS",
+          "name": "Google Sheets account"
+        }
+      },
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_CRM_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "To Do"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      }
+    },
+    {
+      "id": "afd-reminder-note",
+      "name": "Reminder Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        632,
+        -352
+      ],
+      "parameters": {
+        "color": 3,
+        "width": 640,
+        "height": 240,
+        "content": "**Appointment reminder checklist** (added 2026-07-28)\n\nEvery booking drops ONE row on the **To Do** tab so staff can chase no-shows.\nThe tab has two extra columns, **1st reminder** (day before) and **2nd reminder**\n(morning of), formatted as checkboxes. A human ticks them after actually\nreminding the patient.\n\nThe workflow NEVER writes those two cells. The append is cellFormat RAW (needed\nso PH mobiles keep their leading 0) and RAW would store FALSE as the literal\ntext \"FALSE\", which breaks a checkbox cell. Blank renders as unticked.\n\nFed by Compose Booking Success AND Compose Reschedule Reply. NOT by Compose\nCancel Reply - a cancelled appointment needs no reminder. A reschedule adds a\nfresh row prefixed \"MOVED - \"; the stale earlier row is deleted by staff.\n\nNo cron, no calendar polling: the booking flow already has every field, so a\nbooking can never be missed or duplicated."
+      }
+    },
+    {
+      "id": "afd-match-patient",
+      "name": "Match Patient To Event",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2288,
+        1040
+      ],
+      "executeOnce": true,
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ (() => {\n  const norm = (s) => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\\s+/g, ' ').trim();\n  const toks = (s) => norm(s).split(' ').filter(Boolean);\n  let dec = {};\n  try { dec = $('Parse Agent Decision').item.json || {}; } catch (e) { dec = {}; }\n  let events = [];\n  try { events = $('Find Appointment').all().map((i) => i.json).filter((e) => e && e.id); } catch (e) { events = []; }\n  if (!events.length) return { matched: false, match_reason: 'no-upcoming-events' };\n  const nameOf = (ev) => { const parts = String(ev.summary == null ? '' : ev.summary).split(' - '); return parts.length > 1 ? parts[1] : String(ev.summary == null ? '' : ev.summary); };\n  const names = events.map(nameOf);\n  const want = toks(dec.client_name);\n  if (!want.length) {\n    if (events.length === 1) return Object.assign({}, events[0], { matched: true, match_reason: 'mobile-only', candidates: 1 });\n    return { matched: false, match_reason: 'ambiguous-no-name', candidates: events.length, candidate_names: names.join(' | ') };\n  }\n  const exact = events.filter((ev) => norm(nameOf(ev)) === norm(dec.client_name));\n  const partial = events.filter((ev) => {\n    const have = toks(nameOf(ev));\n    if (!have.length) return false;\n    return want.every((t) => have.includes(t)) || have.every((t) => want.includes(t));\n  });\n  const pool = exact.length ? exact : partial;\n  if (!pool.length) return { matched: false, match_reason: 'name-mismatch', candidates: events.length, candidate_names: names.join(' | ') };\n  if (pool.length > 1) return { matched: false, match_reason: 'ambiguous-name', candidates: pool.length, candidate_names: pool.map(nameOf).join(' | ') };\n  return Object.assign({}, pool[0], { matched: true, match_reason: exact.length ? 'exact' : 'partial', candidates: events.length });\n})() }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-reply-overridden",
+      "name": "Reply Overridden?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4992,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "overridden-cond",
+              "leftValue": "={{ (() => {\n  try {\n    const draft = String($('Parse Agent Decision').item.json.reply_text || '').trim();\n    const sent = String($json.reply_text || '').trim();\n    return draft.length > 0 && sent.length > 0 && draft !== sent;\n  } catch (e) { return false; }\n})() }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afd-drop-draft",
+      "name": "Drop Agent Draft",
+      "type": "@n8n/n8n-nodes-langchain.memoryManager",
+      "typeVersion": 1.1,
+      "position": [
+        5200,
+        0
+      ],
+      "parameters": {
+        "mode": "delete",
+        "deleteMode": "lastN",
+        "lastMessagesCount": 1
+      }
+    },
+    {
+      "id": "afd-record-final",
+      "name": "Record Final Reply",
+      "type": "@n8n/n8n-nodes-langchain.memoryManager",
+      "typeVersion": 1.1,
+      "position": [
+        5616,
+        0
+      ],
+      "parameters": {
+        "mode": "insert",
+        "insertMode": "insert",
+        "messages": {
+          "messageValues": [
+            {
+              "type": "ai",
+              "message": "={{ $('Reply Overridden?').item.json.reply_text }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ (() => { const ctx = $('Attach Manage Context').item.json; return { ...ctx, move_time_ok: (() => { const p = $('Prepare Conversation State').item.json; const sRaw = ctx.new_start; const eRaw = ctx.new_end; const s = DateTime.fromISO(sRaw).setZone(p.clinic_timezone); const e = eRaw ? DateTime.fromISO(eRaw).setZone(p.clinic_timezone) : s.plus({ hours: 1 }); if (!s.isValid || !e.isValid) return false; if (s < DateTime.now()) return false; if ((p.clinic_closed_weekdays || []).includes(s.weekday)) return false; if (s.weekday !== e.weekday) return false; const sMin = s.hour * 60 + s.minute; const eMin = e.hour * 60 + e.minute; return sMin >= p.clinic_open_hour * 60 && eMin <= p.clinic_close_hour * 60; })() }; })() }}",
+        "options": {}
+      },
+      "id": "afd-check-move-hours",
+      "name": "Check Move Hours",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3328,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "move-time-ok-cond",
+              "leftValue": "={{ $json.move_time_ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "afd-move-time-ok",
+      "name": "Move Time OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3536,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ (() => { const d = $('Attach Manage Context').item.json; const dec = d.decision; const p = $('Prepare Conversation State').item.json; return { ...dec, reply_text: 'Sorry, that new time is outside our clinic hours (' + p.clinic_hours_text + ') or already past, so I left your original appointment as it is.\\n\\nCould you pick another time? I can check what is open for you.', action: 'collect_missing_info', booking_status: 'pending', human_task_required: false, staff_email_required: false }; })() }}",
+        "options": {}
+      },
+      "id": "afd-build-move-reject",
+      "name": "Build Move Reject Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3536,
+        1456
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "booking-confirmed-cond",
+              "leftValue": "={{ $json.patient_confirmed === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "afd-booking-confirmed",
+      "name": "Booking Confirmed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3328,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ (() => { const d = $json; const fmt = (iso) => { const d = DateTime.fromISO(iso).setZone('Asia/Manila'); return d.isValid ? d.toFormat(\"cccc, LLLL d 'at' h:mm a\") : ''; } const when = fmt(d.appointment_start) || 'the time you asked for'; const svc = d.service_or_concern || 'your appointment'; return { ...d, reply_text: 'Just to confirm before I book it: ' + svc + ' on ' + when + '.\\n\\nReply yes and I will lock it in.', action: 'collect_missing_info', booking_status: 'pending', human_task_required: false, staff_email_required: false }; })() }}",
+        "options": {}
+      },
+      "id": "afd-build-booking-confirm",
+      "name": "Build Booking Confirm Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3328,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "manage-confirmed-cond",
+              "leftValue": "={{ $json.decision.patient_confirmed === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "afd-manage-confirmed",
+      "name": "Manage Confirmed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3120,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ (() => { const c = $('Attach Manage Context').item.json; const dec = c.decision; const fmt = (iso) => { const d = DateTime.fromISO(iso).setZone('Asia/Manila'); return d.isValid ? d.toFormat(\"cccc, LLLL d 'at' h:mm a\") : ''; } const parts = String(c.event_summary || '').split(' - '); const svc = parts.length > 2 ? parts[2] : 'appointment'; const oldWhen = fmt(c.event_start) || 'its current time'; let reply; if (dec.action === 'cancel') { reply = 'I found your ' + svc + ' on ' + oldWhen + '.\\n\\nJust to confirm, you want me to cancel it? Reply yes and I will cancel it.'; } else { const newWhen = fmt(c.new_start) || 'the new time'; reply = 'I found your ' + svc + ' on ' + oldWhen + '.\\n\\nJust to confirm, you want me to move it to ' + newWhen + '? Reply yes and I will move it.'; } return { ...dec, reply_text: reply, action: 'collect_missing_info', booking_status: 'pending', human_task_required: false, staff_email_required: false }; })() }}",
+        "options": {}
+      },
+      "id": "afd-build-manage-confirm",
+      "name": "Build Manage Confirm Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3120,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "lookup-only-cond",
+              "leftValue": "={{ $json.decision.action }}",
+              "rightValue": "lookup",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "afd-lookup-only",
+      "name": "Lookup Only?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2912,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ (() => { const c = $('Attach Manage Context').item.json; const dec = c.decision; const fmt = (iso) => { const d = DateTime.fromISO(iso).setZone('Asia/Manila'); return d.isValid ? d.toFormat(\"cccc, LLLL d 'at' h:mm a\") : ''; } const parts = String(c.event_summary || '').split(' - '); const svc = parts.length > 2 ? parts[2] : 'appointment'; const when = fmt(c.event_start) || 'a time we have on file'; return { ...dec, reply_text: 'Yes, you have your ' + svc + ' on ' + when + '.\\n\\nWould you like to keep it, move it, or cancel it?', action: 'answer', booking_status: 'none', human_task_required: false, staff_email_required: false }; })() }}",
+        "options": {}
+      },
+      "id": "afd-build-lookup-reply",
+      "name": "Build Lookup Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2912,
+        1248
+      ]
+    }
+  ],
+  "connections": {
+    "Prepare Conversation State": {
+      "main": [
+        [
+          {
+            "node": "AI RAG Front Desk Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI RAG Front Desk Agent": {
+      "main": [
+        [
+          {
+            "node": "Attach Conversation State",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Fallback Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Conversation State": {
+      "main": [
+        [
+          {
+            "node": "Parse Agent Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI RAG Front Desk Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conversation Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI RAG Front Desk Agent",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "Drop Agent Draft",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "Record Final Reply",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase RAG Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI RAG Front Desk Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase RAG Tool",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Availability": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI RAG Front Desk Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Fixer Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Structured Decision Parser",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Decision Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI RAG Front Desk Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Agent Decision": {
+      "main": [
+        [
+          {
+            "node": "Mobile Needs Recheck?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ready To Book?": {
+      "main": [
+        [
+          {
+            "node": "Booking Confirmed?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Human Task Needed?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Staff Email Needed?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Calendar Appointment": {
+      "main": [
+        [
+          {
+            "node": "Attach Booking Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Booking Context": {
+      "main": [
+        [
+          {
+            "node": "Compose Booking Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Booking Success": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Booking Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Human Task Needed?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Staff Email Needed?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Reminder Checklist Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Staff Email Needed?": {
+      "main": [
+        [
+          {
+            "node": "Send Staff Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Workflow Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Email Workflow Error To Staff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Human Task Needed?": {
+      "main": [
+        [
+          {
+            "node": "Build ToDo Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Build Chat Row": {
+      "main": [
+        [
+          {
+            "node": "Append All Chats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Booking Row": {
+      "main": [
+        [
+          {
+            "node": "Append Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build ToDo Row": {
+      "main": [
+        [
+          {
+            "node": "Append To Do",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reschedule or Cancel?": {
+      "main": [
+        [
+          {
+            "node": "Find Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ready To Book?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Hours": {
+      "main": [
+        [
+          {
+            "node": "Booking Time OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Booking Time OK?": {
+      "main": [
+        [
+          {
+            "node": "Slot Still Free?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Reject Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reject Reply": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Fallback Reply": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Human Task Needed?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Appointment": {
+      "main": [
+        [
+          {
+            "node": "Match Patient To Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Manage Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Manage Context": {
+      "main": [
+        [
+          {
+            "node": "Appointment Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appointment Found?": {
+      "main": [
+        [
+          {
+            "node": "Lookup Only?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Manage Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cancel or Move?": {
+      "main": [
+        [
+          {
+            "node": "Delete Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Move Hours",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Appointment": {
+      "main": [
+        [
+          {
+            "node": "Compose Cancel Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Manage Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Appointment": {
+      "main": [
+        [
+          {
+            "node": "Compose Reschedule Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Manage Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Cancel Reply": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Booking Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Reschedule Reply": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Booking Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Reminder Checklist Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manage Not Found": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Human Task Needed?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mobile Needs Recheck?": {
+      "main": [
+        [
+          {
+            "node": "Build Mobile Recheck Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reschedule or Cancel?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Mobile Recheck Reply": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Human Task Needed?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slot Still Free?": {
+      "main": [
+        [
+          {
+            "node": "Attach Availability",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Fallback Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Availability": {
+      "main": [
+        [
+          {
+            "node": "Slot Free?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slot Free?": {
+      "main": [
+        [
+          {
+            "node": "Create Calendar Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Slot Taken Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Slot Taken Reply": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Conflicts": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Conflicts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Fallback Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Conflicts": {
+      "main": [
+        [
+          {
+            "node": "Attach Move Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Move Context": {
+      "main": [
+        [
+          {
+            "node": "New Slot Free?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Slot Free?": {
+      "main": [
+        [
+          {
+            "node": "Update Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Move Busy Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Move Busy Reply": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Webhook Verify": {
+      "main": [
+        [
+          {
+            "node": "Check Meta Verify Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Meta Verify Token": {
+      "main": [
+        [
+          {
+            "node": "Respond Meta Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Inbound Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Meta Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Meta Message": {
+      "main": [
+        [
+          {
+            "node": "Prepare Conversation State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generic Inquiry Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Generic Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Generic Message": {
+      "main": [
+        [
+          {
+            "node": "Prepare Conversation State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply Via Meta?": {
+      "main": [
+        [
+          {
+            "node": "Send Meta Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Generic Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reminder Checklist Row": {
+      "main": [
+        [
+          {
+            "node": "Append Reminder Checklist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Patient To Event": {
+      "main": [
+        [
+          {
+            "node": "Attach Manage Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply Overridden?": {
+      "main": [
+        [
+          {
+            "node": "Drop Agent Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Drop Agent Draft": {
+      "main": [
+        [
+          {
+            "node": "Record Final Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Move Hours": {
+      "main": [
+        [
+          {
+            "node": "Move Time OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move Time OK?": {
+      "main": [
+        [
+          {
+            "node": "Find Conflicts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Move Reject Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Move Reject Reply": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Booking Confirmed?": {
+      "main": [
+        [
+          {
+            "node": "Check Hours",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Booking Confirm Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manage Confirmed?": {
+      "main": [
+        [
+          {
+            "node": "Cancel or Move?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Manage Confirm Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Booking Confirm Prompt": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Manage Confirm Prompt": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Only?": {
+      "main": [
+        [
+          {
+            "node": "Build Lookup Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Manage Confirmed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Lookup Reply": {
+      "main": [
+        [
+          {
+            "node": "Build Chat Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Via Meta?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply Overridden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

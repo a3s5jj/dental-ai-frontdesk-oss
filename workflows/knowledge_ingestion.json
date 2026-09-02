@@ -1,0 +1,251 @@
+{
+  "id": "DentalKbIngest01",
+  "name": "Dental Front Desk - Knowledge Ingestion",
+  "description": null,
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "REPLACE_DRIVE_FOLDER_URL",
+          "mode": "url"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "fce5aeec-d389-4e83-b88a-9ed58ae0d74b",
+      "name": "Google Drive Trigger",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_CRED_GDRIVE",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id }}"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "text/plain"
+            }
+          }
+        }
+      },
+      "id": "36cffc07-1e42-4f71-a92b-4e21e85912fc",
+      "name": "Download File",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        208,
+        0
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_CRED_GDRIVE",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": "documents",
+        "options": {}
+      },
+      "id": "77a39df8-14d3-404d-845b-f8409895bdea",
+      "name": "Supabase Vector Store (Insert)",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.1,
+      "position": [
+        416,
+        0
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_CRED_SUPABASE",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "binary",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "source",
+                "value": "={{ $('Google Drive Trigger').item.json.name }}"
+              },
+              {
+                "name": "file_id",
+                "value": "={{ $('Google Drive Trigger').item.json.id }}"
+              }
+            ]
+          }
+        },
+        "textSplittingMode": "custom"
+      },
+      "id": "037b2882-21e2-434f-a09d-8134bdf8b673",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        416,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "chunkOverlap": 200,
+        "options": {},
+        "chunkSize": 1000
+      },
+      "id": "33fe77ac-6362-42e4-865c-0fbf71ab24bc",
+      "name": "Recursive Character Text Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        416,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "content": "**1) Watch a Drive folder**\nDrop a file into the chosen Google Drive folder and this fires (polls every minute for newly created files). Download File then pulls the binary. Google Docs are auto-exported to plain text. Connect Google Drive credentials, then pick the folder to watch.",
+        "height": 150,
+        "width": 480,
+        "color": 4
+      },
+      "id": "fb88844a-c936-4098-980a-bd76d2ffc510",
+      "name": "Sticky Note Trigger",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -262
+      ]
+    },
+    {
+      "parameters": {
+        "content": "**2) Embed and store**\nThe Default Data Loader auto-detects the file type (PDF / text / CSV / etc.) and the splitter breaks it into ~1000-char chunks. OpenAI (1536-dim) embeds each chunk and Supabase Vector Store INSERTS them into the 'documents' table — the same table the Facebook agent searches. Requires the documents table + match_documents function to exist first.",
+        "height": 150,
+        "width": 480,
+        "color": 6
+      },
+      "id": "a56f03da-f076-4abd-9b42-17e240599266",
+      "name": "Sticky Note Ingest",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        592,
+        -262
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        208,
+        208
+      ],
+      "id": "4e2652ca-59ca-4ba0-b4c0-0257c5f65b43",
+      "name": "Embeddings OpenAI",
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_CRED_OPENAI",
+          "name": "OpenAI account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Google Drive Trigger": {
+      "main": [
+        [
+          {
+            "node": "Download File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File": {
+      "main": [
+        [
+          {
+            "node": "Supabase Vector Store (Insert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Supabase Vector Store (Insert)",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase Vector Store (Insert)",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "pinData": {},
+  "tags": []
+}

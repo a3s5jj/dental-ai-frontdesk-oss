@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+config/clinic.json
+outputs/
+kb/
+executions/
+node_modules/
+*.sqlite
+*.db
+*.zip
+*.bak
+*.backup

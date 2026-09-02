@@ -1,0 +1,12 @@
+{
+  "name": "dental-front-desk-tools",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline checks and knowledge base ingestion for the dental AI front desk.",
+  "scripts": {
+    "test": "node validate_workflow.mjs && node test_matcher.mjs && node test_hours.mjs && node test_text.mjs && node test_clinic_from_faq.mjs && node test_workflow_layouts.mjs",
+    "kb": "node kb_ingest.mjs",
+    "clinic": "node clinic_from_faq.mjs"
+  }
+}

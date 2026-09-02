@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "Your clinic's details. This file is a REFERENCE COPY, not something the workflow reads.",
+    "n8n cannot load a local file at runtime, so the live values live inside the workflow, in",
+    "the 'Prepare Conversation State' node. Keep this file in sync as your written record of",
+    "what you set, and see docs/SOP_CUSTOMIZE.md for how to apply it.",
+    "Copy this to config/clinic.json (gitignored) before filling in real details."
+  ],
+
+  "clinic_name": "Example Dental Clinic",
+  "clinic_timezone": "Asia/Manila",
+
+  "clinic_open_hour": 8,
+  "clinic_close_hour": 17,
+  "clinic_closed_weekdays": [7],
+  "clinic_hours_text": "Monday to Saturday, 8AM to 5PM, closed Sunday",
+  "clinic_last_walk_in": "4:30PM",
+
+  "clinic_address": "123 Example Street, Your City",
+  "clinic_mobile": "000 000 0000",
+  "clinic_email": "hello@example-dental.test",
+  "clinic_dentist": "Dr. Example Dentist",
+
+  "_field_notes": {
+    "clinic_timezone": "IANA name, e.g. Asia/Manila, America/New_York, Europe/London. It must also be changed everywhere else in the workflow, see docs/SOP_CUSTOMIZE.md. npm test checks they agree.",
+    "clinic_open_hour": "24h clock. 8 = 8AM. The first hour an appointment may start.",
+    "clinic_close_hour": "24h clock. 17 = 5PM. Every appointment must END by this hour.",
+    "clinic_closed_weekdays": "ISO weekday numbers, 1 = Monday through 7 = Sunday. [7] closes Sunday, [6,7] closes the weekend, [] never closes.",
+    "clinic_hours_text": "Shown to patients verbatim. Must agree with the three fields above, nothing checks this for you.",
+    "clinic_last_walk_in": "Text only. Shown to patients who ask about walk-ins."
+  }
+}
