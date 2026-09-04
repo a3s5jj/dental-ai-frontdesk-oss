@@ -25,14 +25,27 @@ credentials.
 flowchart LR
   A[Messenger, Instagram, or website] --> B[Normalize conversation]
   B --> C[AI front desk]
-  C --> D[Search clinic knowledge]
+  C <--> D[(Clinic knowledge)]
   C --> E{Requested action}
-  E -->|Answer| F[Send reply]
+  E -->|Answer| R[Send reply]
   E -->|Book or move| G[Deterministic guards]
   G --> H[Recheck hours and slot]
-  H --> I[Google Calendar]
-  I --> J[Google Sheets log]
+  H --> I[(Google Calendar)]
+  I --> J[(Google Sheets log)]
+  J --> R
   E -->|Needs staff| K[Escalation and task]
+  K --> R
+
+  classDef entry fill:#dbeafe,stroke:#1d4ed8,color:#0f172a
+  classDef ai fill:#ede9fe,stroke:#6d28d9,color:#0f172a
+  classDef logic fill:#dcfce7,stroke:#15803d,color:#0f172a
+  classDef ext fill:#fef3c7,stroke:#b45309,color:#0f172a
+  classDef stop fill:#fee2e2,stroke:#b91c1c,color:#0f172a
+  class A entry
+  class C,E ai
+  class B,G,H,R logic
+  class D,I,J ext
+  class K stop
 ```
 
 The model interprets the conversation and proposes an action. Plain workflow
