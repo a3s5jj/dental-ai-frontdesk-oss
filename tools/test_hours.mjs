@@ -11,8 +11,9 @@
  *   - hours were Mon-Fri 9-19 / Sat 9-17 when the clinic is Mon-Sat 8-17
  *   - an appointment could END after closing because only the start was checked
  *
- * Luxon is not a dependency of this folder, so it is borrowed from the global n8n install,
- * which is the same library the expression runs against in production.
+ * Luxon is pinned here to the exact version n8n bundles, so the expression is tested against
+ * the same library it runs against in production. If the dependency is absent but a global
+ * n8n install is present, it is borrowed from there instead.
  */
 
 import { readFileSync } from 'node:fs';
