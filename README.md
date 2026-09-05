@@ -31,7 +31,7 @@ looks like success.
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TD
   A[Messenger, Instagram, or website] --> B[Normalize conversation]
   B --> C[AI front desk]
   C <--> D[(Clinic knowledge)]
